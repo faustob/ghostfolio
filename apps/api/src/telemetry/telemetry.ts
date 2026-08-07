@@ -34,6 +34,11 @@ let httpServerRequests: Counter | undefined;
 let httpServerActiveRequests: UpDownCounter | undefined;
 let httpServerWorkerPoolSize: UpDownCounter | undefined;
 let authAttempt: Counter | undefined;
+let flowEntry: Counter | undefined;
+let flowOutcome: Counter | undefined;
+let flowDuration: Histogram | undefined;
+let flowEntryToTerminalDuration: Histogram | undefined;
+let flowValidationOutcome: Counter | undefined;
 
 /**
  * OTel semantic convention: inbound request duration in SECONDS.
@@ -102,6 +107,125 @@ export function getAuthAttempt(): Counter {
   }
 
   return authAttempt;
+}
+
+/**
+ * Throughput: incremented at the flow entry point, whatever the outcome.
+ * Singular count name to match the existing `auth.attempt` convention.
+ */
+export function getFlowEntry(): Counter {
+  if (!flowEntry) {
+    flowEntry = getMeter().createCounter('flow.entry', {
+      description: 'Business flow invocations counted at the entry point'
+    });
+  }
+
+  return flowEntry;
+}
+
+/** Availability: terminal outcome of a business flow (success / failure). */
+export function getFlowOutcome(): Counter {
+  if (!flowOutcome) {
+    flowOutcome = getMeter().createCounter('flow.outcome', {
+      description: 'Terminal outcomes of a business flow by outcome'
+    });
+  }
+
+  return flowOutcome;
+}
+
+/** Latency: end-to-end duration of a business flow in SECONDS. */
+export function getFlowDuration(): Histogram {
+  if (!flowDuration) {
+    flowDuration = getMeter().createHistogram('flow.duration', {
+      description: 'End-to-end duration of a business flow',
+      unit: 's'
+    });
+  }
+
+  return flowDuration;
+}
+
+/** Freshness: entry event to terminal state transition, in SECONDS. */
+export function getFlowEntryToTerminalDuration(): Histogram {
+  if (!flowEntryToTerminalDuration) {
+    flowEntryToTerminalDuration = getMeter().createHistogram(
+      'flow.entry_to_terminal.duration',
+      {
+        description:
+          'Wall-clock time between the flow entry event and its terminal state transition',
+        unit: 's'
+      }
+    );
+  }
+
+  return flowEntryToTerminalDuration;
+}
+
+/** Error rate: outcome of each validation step of a business flow. */
+export function getFlowValidationOutcome(): Counter {
+  if (!flowValidationOutcome) {
+    flowValidationOutcome = getMeter().createCounter(
+      'flow.validation.outcome',
+      {
+        description: 'Outcomes of the validation steps of a business flow'
+      }
+    );
+  }
+
+  return flowValidationOutcome;
+}
+
+/** Records the entry of a business flow (throughput denominator). */
+export function recordFlowEntry({ flow }: { flow: string }) {
+  getFlowEntry().add(1, { flow });
+}
+
+/**
+ * Records the terminal state of a business flow: the outcome counter
+ * (availability), the flow duration (latency) and the entry-to-terminal
+ * duration (freshness).
+ */
+export function recordFlowOutcome({
+  durationInSeconds,
+  errorType,
+  flow,
+  outcome
+}: {
+  durationInSeconds: number;
+  errorType?: string;
+  flow: string;
+  outcome: 'success' | 'failure';
+}) {
+  const attributes = {
+    flow,
+    outcome,
+    ...(errorType ? { 'error.type': errorType } : {})
+  };
+
+  getFlowOutcome().add(1, attributes);
+  getFlowDuration().record(durationInSeconds, attributes);
+  getFlowEntryToTerminalDuration().record(durationInSeconds, attributes);
+}
+
+/** Records the outcome of a single validation step of a business flow. */
+export function recordFlowValidationOutcome({
+  errorType,
+  flow,
+  outcome,
+  step
+}: {
+  errorType?: string;
+  flow: string;
+  outcome: 'passed' | 'failed';
+  step: string;
+}) {
+  getFlowValidationOutcome().add(1, {
+    flow,
+    outcome,
+    'flow.validation.step': step,
+    ...(errorType ? { 'error.type': errorType } : {})
+  });
 }
 
 let workerPoolSizeReported = false;
