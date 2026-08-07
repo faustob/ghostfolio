@@ -55,6 +55,8 @@ import { AssetClass, AssetSubClass, DataSource } from '@prisma/client';
 import { Big } from 'big.js';
 import { StatusCodes, getReasonPhrase } from 'http-status-codes';
 
+import * as telemetry from '../../telemetry/telemetry';
+
 import { GetDetailsDto } from './get-details.dto';
 import { GetDividendsDto } from './get-dividends.dto';
 import { GetHoldingsDto } from './get-holdings.dto';
@@ -118,18 +120,33 @@ export class PortfolioController {
       marketsAdvanced,
       platforms,
       summary
-    } = await this.portfolioService.getDetails({
-      filters,
-      impersonationId,
-      withMarkets,
-      dateRange: range,
-      userId: this.request.user.id,
-      withSummary: true
-    });
+    } = await telemetry.runFlow(
+      {
+        attributes: { 'flow.date_range': range ?? 'default' },
+        flow: 'portfolio_performance_view',
+        step: 'allocation'
+      },
+      () => {
+        return this.portfolioService.getDetails({
+          filters,
+          impersonationId,
+          withMarkets,
+          dateRange: range,
+          userId: this.request.user.id,
+          withSummary: true
+        });
+      }
+    );
 
     if (hasErrors || hasNotDefinedValuesInObject(holdings)) {
       hasError = true;
     }
+
+    telemetry.recordFlowValidation({
+      flow: 'portfolio_performance_view',
+      outcome: hasError ? 'failed' : 'passed',
+      step: 'holdings_completeness'
+    });
 
     let portfolioSummary = summary;
 
@@ -567,12 +584,27 @@ export class PortfolioController {
       filterByTags: tags
     });
 
-    const performanceInformation = await this.portfolioService.getPerformance({
-      filters,
-      impersonationId,
-      withExcludedAccounts,
-      dateRange: range,
-      userId: this.request.user.id
+    const performanceInformation = await telemetry.runFlow(
+      {
+        attributes: { 'flow.date_range': range ?? 'default' },
+        flow: 'portfolio_performance_view',
+        step: 'performance'
+      },
+      () => {
+        return this.portfolioService.getPerformance({
+          filters,
+          impersonationId,
+          withExcludedAccounts,
+          dateRange: range,
+          userId: this.request.user.id
+        });
+      }
+    );
+
+    telemetry.recordFlowValidation({
+      flow: 'portfolio_performance_view',
+      outcome: performanceInformation?.errors?.length ? 'failed' : 'passed',
+      step: 'performance_chart'
     });
 
     if (
