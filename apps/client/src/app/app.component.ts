@@ -44,6 +44,7 @@ import { HoldingDetailDialogResult } from './components/holding-detail-dialog/in
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
 import { UserService } from './services/user/user.service';
+import { WebVitalsService } from './services/web-vitals.service';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -83,6 +84,7 @@ export class GfAppComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly title = inject(Title);
   private readonly userService = inject(UserService);
+  private readonly webVitalsService = inject(WebVitalsService);
 
   public constructor() {
     this.initializeTheme();
@@ -112,6 +114,9 @@ export class GfAppComponent implements OnInit {
     this.deviceType = this.deviceDetectorService.getDeviceInfo().deviceType;
     this.info = this.dataService.fetchInfo();
 
+    // Start reporting Core Web Vitals and unhandled JavaScript errors
+    this.webVitalsService.initialize(this.deviceType);
+
     this.impersonationStorageService
       .onChangeHasImpersonation()
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -127,6 +132,13 @@ export class GfAppComponent implements OnInit {
         const urlSegments = urlSegmentGroup.segments;
         this.currentRoute = urlSegments[0].path;
         this.currentSubRoute = urlSegments[1]?.path;
+
+        // SPA soft-navigation timing, tagged with the destination route
+        this.webVitalsService.reportRouteChange({
+          route: this.currentSubRoute
+            ? `/${this.currentRoute}/${this.currentSubRoute}`
+            : `/${this.currentRoute}`
+        });
 
         if (
           ((this.currentRoute === internalRoutes.home.path &&
