@@ -55,6 +55,7 @@ import { PublicModule } from './endpoints/public/public.module';
 import { SitemapModule } from './endpoints/sitemap/sitemap.module';
 import { TagsModule } from './endpoints/tags/tags.module';
 import { WatchlistModule } from './endpoints/watchlist/watchlist.module';
+import { WebVitalsModule } from './endpoints/web-vitals/web-vitals.module';
 import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { ExportModule } from './export/export.module';
 import { HealthModule } from './health/health.module';
@@ -185,7 +186,8 @@ import { UserModule } from './user/user.module';
       }
     }),
     UserModule,
-    WatchlistModule
+    WatchlistModule,
+    WebVitalsModule
   ],
   providers: [
     I18nService,

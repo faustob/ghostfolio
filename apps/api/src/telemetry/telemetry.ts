@@ -39,6 +39,12 @@ let flowOutcome: Counter | undefined;
 let flowDuration: Histogram | undefined;
 let flowEntryToTerminalDuration: Histogram | undefined;
 let flowValidationOutcome: Counter | undefined;
+let webVitalLcp: Histogram | undefined;
+let webVitalInp: Histogram | undefined;
+let webVitalCls: Histogram | undefined;
+let webJsErrors: Counter | undefined;
+let webSessions: Counter | undefined;
+let browserRouteChangeDuration: Histogram | undefined;
 
 /**
  * OTel semantic convention: inbound request duration in SECONDS.
@@ -225,6 +231,148 @@ export function recordFlowValidationOutcome({
     outcome,
     'flow.validation.step': step,
     ...(errorType ? { 'error.type': errorType } : {})
+  });
+}
+
+/** Core Web Vital: Largest Contentful Paint, reported by the browser. */
+export function getWebVitalLcp(): Histogram {
+  if (!webVitalLcp) {
+    webVitalLcp = getMeter().createHistogram('web.vital.lcp', {
+      description: 'Largest Contentful Paint reported by real user sessions',
+      unit: 'ms'
+    });
+  }
+
+  return webVitalLcp;
+}
+
+/** Core Web Vital: Interaction to Next Paint, reported by the browser. */
+export function getWebVitalInp(): Histogram {
+  if (!webVitalInp) {
+    webVitalInp = getMeter().createHistogram('web.vital.inp', {
+      description: 'Interaction to Next Paint reported by real user sessions',
+      unit: 'ms'
+    });
+  }
+
+  return webVitalInp;
+}
+
+/** Core Web Vital: Cumulative Layout Shift - a unitless score, not a latency. */
+export function getWebVitalCls(): Histogram {
+  if (!webVitalCls) {
+    webVitalCls = getMeter().createHistogram('web.vital.cls', {
+      description: 'Cumulative Layout Shift reported by real user sessions'
+    });
+  }
+
+  return webVitalCls;
+}
+
+/** Error rate numerator: browser sessions affected by an unhandled JS error. */
+export function getWebJsErrors(): Counter {
+  if (!webJsErrors) {
+    webJsErrors = getMeter().createCounter('web.js.errors', {
+      description: 'Unhandled JavaScript errors reported by the browser'
+    });
+  }
+
+  return webJsErrors;
+}
+
+/** Error rate denominator: browser sessions that reported any telemetry. */
+export function getWebSessions(): Counter {
+  if (!webSessions) {
+    webSessions = getMeter().createCounter('web.sessions', {
+      description: 'Browser sessions reporting real user telemetry'
+    });
+  }
+
+  return webSessions;
+}
+
+/** Latency: SPA soft-navigation (route transition) duration in SECONDS. */
+export function getBrowserRouteChangeDuration(): Histogram {
+  if (!browserRouteChangeDuration) {
+    browserRouteChangeDuration = getMeter().createHistogram(
+      'browser.route_change.duration',
+      {
+        description: 'Duration of SPA soft navigations between routes',
+        unit: 's'
+      }
+    );
+  }
+
+  return browserRouteChangeDuration;
+}
+
+/**
+ * Records one real-user-monitoring measurement reported by the browser.
+ * `route` is the low-cardinality Angular route TEMPLATE, never the raw URL.
+ */
+export function recordWebVital({
+  deviceType,
+  metric,
+  route,
+  value
+}: {
+  deviceType?: string;
+  metric: string;
+  route: string;
+  value: number;
+}) {
+  const attributes = {
+    'http.route': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
+  };
+
+  switch (metric) {
+    case 'CLS':
+      getWebVitalCls().record(value, attributes);
+      break;
+    case 'INP':
+      getWebVitalInp().record(value, attributes);
+      break;
+    case 'LCP':
+      getWebVitalLcp().record(value, attributes);
+      break;
+    case 'route-change':
+      // Reported in milliseconds by the browser, recorded in SECONDS
+      getBrowserRouteChangeDuration().record(value / 1000, attributes);
+      break;
+    default:
+      break;
+  }
+}
+
+/** Records an unhandled browser JS error (error CLASS only, never a message). */
+export function recordWebJsError({
+  deviceType,
+  errorType,
+  route
+}: {
+  deviceType?: string;
+  errorType: string;
+  route: string;
+}) {
+  getWebJsErrors().add(1, {
+    'error.type': errorType,
+    'http.route': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
+  });
+}
+
+/** Records the start of a browser session (JS error rate denominator). */
+export function recordWebSessionStart({
+  deviceType,
+  route
+}: {
+  deviceType?: string;
+  route: string;
+}) {
+  getWebSessions().add(1, {
+    'http.route': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
   });
 }
 

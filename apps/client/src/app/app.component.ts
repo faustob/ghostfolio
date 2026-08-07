@@ -44,6 +44,7 @@ import { HoldingDetailDialogResult } from './components/holding-detail-dialog/in
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
 import { UserService } from './services/user/user.service';
+import { WebVitalsService } from './services/web-vitals.service';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -83,6 +84,7 @@ export class GfAppComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly title = inject(Title);
   private readonly userService = inject(UserService);
+  private readonly webVitalsService = inject(WebVitalsService);
 
   public constructor() {
     this.initializeTheme();
@@ -111,6 +113,10 @@ export class GfAppComponent implements OnInit {
   public ngOnInit() {
     this.deviceType = this.deviceDetectorService.getDeviceInfo().deviceType;
     this.info = this.dataService.fetchInfo();
+
+    // Start collecting Core Web Vitals, JS errors and SPA route-transition
+    // timings and report them to the API (browser holds no OTel imports)
+    this.webVitalsService.initialize({ deviceType: this.deviceType });
 
     this.impersonationStorageService
       .onChangeHasImpersonation()
