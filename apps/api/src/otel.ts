@@ -18,6 +18,9 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import * as semconv from '@opentelemetry/semantic-conventions';
 
+// Registration site for the global OTel SDK used by the business-flow
+// instrumentation in apps/api/src/telemetry/telemetry.ts and by the
+// portfolio performance/allocation view flow spans.
 const serviceName = process.env.OTEL_SERVICE_NAME ?? 'ghostfolio-api';
 
 let sdk: NodeSDK | undefined;
