@@ -35,6 +35,11 @@ import {
 
 import { Injectable } from '@nestjs/common';
 import { DataSource, Prisma } from '@prisma/client';
+
+import {
+  IMPORT_FLOW_NAME,
+  recordImportValidationOutcome
+} from '../../telemetry';
 import { Big } from 'big.js';
 import { endOfToday, isAfter, isSameSecond, parseISO } from 'date-fns';
 import { omit, uniqBy } from 'lodash';
@@ -207,10 +212,22 @@ export class ImportService {
         assetProfileWithMarketData.dataSource === DataSource.MANUAL &&
         !isValidCustomAssetProfileSymbol(assetProfileWithMarketData.symbol)
       ) {
+        recordImportValidationOutcome({
+          'flow.name': IMPORT_FLOW_NAME,
+          'flow.validation.step': 'asset_profile_symbol',
+          outcome: 'failed'
+        });
+
         throw new Error(
           `assetProfiles.${index}.symbol ("${assetProfileWithMarketData.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
         );
       }
+
+      recordImportValidationOutcome({
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.validation.step': 'asset_profile_symbol',
+        outcome: 'passed'
+      });
     }
 
     // Validate the symbols before any data is persisted. Activities without a
@@ -228,10 +245,22 @@ export class ImportService {
         activity.dataSource === DataSource.MANUAL &&
         !isValidCustomAssetProfileSymbol(activity.symbol)
       ) {
+        recordImportValidationOutcome({
+          'flow.name': IMPORT_FLOW_NAME,
+          'flow.validation.step': 'activity_symbol',
+          outcome: 'failed'
+        });
+
         throw new Error(
           `activities.${index}.symbol ("${activity.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
         );
       }
+
+      recordImportValidationOutcome({
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.validation.step': 'activity_symbol',
+        outcome: 'passed'
+      });
     }
 
     if (platformsDto?.length) {
@@ -553,6 +582,12 @@ export class ImportService {
       assetProfilesWithMarketDataDto,
       maxActivitiesToImport,
       user
+    });
+
+    recordImportValidationOutcome({
+      'flow.name': IMPORT_FLOW_NAME,
+      'flow.validation.step': 'activities',
+      outcome: 'passed'
     });
 
     const activitiesExtendedWithErrors = await this.extendActivitiesWithErrors({

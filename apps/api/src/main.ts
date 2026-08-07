@@ -1,3 +1,5 @@
+import './otel';
+
 import { languageRedirectMiddleware } from '@ghostfolio/api/middlewares/language-redirect.middleware';
 import { ConfigurationService } from '@ghostfolio/api/services/configuration/configuration.service';
 import {

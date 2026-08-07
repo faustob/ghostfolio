@@ -22,9 +22,18 @@ import {
   UseInterceptors
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { AuthGuard } from '@nestjs/passport';
 import { DataSource } from '@prisma/client';
 import { StatusCodes, getReasonPhrase } from 'http-status-codes';
+
+import {
+  IMPORT_FLOW_NAME,
+  getImportFlowTracer,
+  recordImportFlowDuration,
+  recordImportFlowEntry,
+  recordImportFlowOutcome
+} from '../../telemetry';
 
 import { ImportDataDto } from './import-data.dto';
 import { ImportService } from './import.service';
@@ -49,6 +58,13 @@ export class ImportController {
     @Query('dryRun') isDryRunParam = 'false'
   ): Promise<ImportResponse> {
     const isDryRun = isDryRunParam === 'true';
+    const flowStartTime = Date.now();
+
+    recordImportFlowEntry({
+      'flow.name': IMPORT_FLOW_NAME,
+      'flow.entry_point': 'POST /api/v1/import',
+      'flow.dry_run': isDryRun
+    });
 
     if (
       !hasPermission(this.request.user.permissions, permissions.createAccount)
@@ -70,6 +86,18 @@ export class ImportController {
       maxActivitiesToImport = Number.MAX_SAFE_INTEGER;
     }
 
+    const flowSpan = getImportFlowTracer().startSpan(
+      'portfolio.activity.import',
+      {
+        attributes: {
+          'flow.name': IMPORT_FLOW_NAME,
+          'flow.dry_run': isDryRun,
+          'http.request.method': 'POST',
+          'http.route': '/api/v1/import'
+        }
+      }
+    );
+
     try {
       const activities = await this.importService.import({
         isDryRun,
@@ -82,9 +110,39 @@ export class ImportController {
         user: this.request.user
       });
 
+      flowSpan.setAttribute('flow.activities.count', activities.length);
+      flowSpan.setAttribute('flow.outcome', 'success');
+      recordImportFlowOutcome({
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.dry_run': isDryRun,
+        outcome: 'success'
+      });
+      recordImportFlowDuration((Date.now() - flowStartTime) / 1000, {
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.dry_run': isDryRun,
+        outcome: 'success'
+      });
+      flowSpan.end();
+
       return { activities };
     } catch (error) {
       this.logger.error(error);
+
+      flowSpan.setAttribute('flow.outcome', 'failure');
+      flowSpan.setAttribute('error.type', error?.name ?? 'Error');
+      flowSpan.setStatus({ code: SpanStatusCode.ERROR });
+      recordImportFlowOutcome({
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.dry_run': isDryRun,
+        outcome: 'failure',
+        'error.type': error?.name ?? 'Error'
+      });
+      recordImportFlowDuration((Date.now() - flowStartTime) / 1000, {
+        'flow.name': IMPORT_FLOW_NAME,
+        'flow.dry_run': isDryRun,
+        outcome: 'failure'
+      });
+      flowSpan.end();
 
       throw new HttpException(
         {
