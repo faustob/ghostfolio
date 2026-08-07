@@ -10,6 +10,8 @@ import { PassportStrategy } from '@nestjs/passport';
 import { StatusCodes, getReasonPhrase } from 'http-status-codes';
 import { HeaderAPIKeyStrategy } from 'passport-headerapikey';
 
+import { recordAuthAttempt } from '../../telemetry/telemetry';
+
 @Injectable()
 export class ApiKeyStrategy extends PassportStrategy(
   HeaderAPIKeyStrategy,
@@ -52,11 +54,19 @@ export class ApiKeyStrategy extends PassportStrategy(
       });
     }
 
+    recordAuthAttempt({ method: 'api-key', outcome: 'granted' });
+
     return user;
   }
 
   private async validateApiKey(apiKey: string) {
     if (!apiKey) {
+      recordAuthAttempt({
+        method: 'api-key',
+        outcome: 'denied',
+        reason: 'missing_api_key'
+      });
+
       throw new HttpException(
         getReasonPhrase(StatusCodes.UNAUTHORIZED),
         StatusCodes.UNAUTHORIZED
@@ -68,6 +78,12 @@ export class ApiKeyStrategy extends PassportStrategy(
 
       return this.userService.user({ id });
     } catch {
+      recordAuthAttempt({
+        method: 'api-key',
+        outcome: 'denied',
+        reason: 'invalid_api_key'
+      });
+
       throw new HttpException(
         getReasonPhrase(StatusCodes.UNAUTHORIZED),
         StatusCodes.UNAUTHORIZED

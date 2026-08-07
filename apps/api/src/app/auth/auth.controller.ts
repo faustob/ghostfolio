@@ -25,6 +25,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Request, Response } from 'express';
 import { getReasonPhrase, StatusCodes } from 'http-status-codes';
 
+import { recordAuthAttempt } from '../../telemetry/telemetry';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -44,8 +45,17 @@ export class AuthController {
       const authToken = await this.authService.validateAnonymousLogin(
         body.accessToken
       );
+
+      recordAuthAttempt({ method: 'anonymous', outcome: 'granted' });
+
       return { authToken };
     } catch {
+      recordAuthAttempt({
+        method: 'anonymous',
+        outcome: 'denied',
+        reason: 'invalid_access_token'
+      });
+
       throw new HttpException(
         getReasonPhrase(StatusCodes.FORBIDDEN),
         StatusCodes.FORBIDDEN
@@ -148,8 +158,17 @@ export class AuthController {
         body.deviceId,
         body.credential
       );
+
+      recordAuthAttempt({ method: 'webauthn', outcome: 'granted' });
+
       return { authToken };
     } catch {
+      recordAuthAttempt({
+        method: 'webauthn',
+        outcome: 'denied',
+        reason: 'verification_failed'
+      });
+
       throw new HttpException(
         getReasonPhrase(StatusCodes.FORBIDDEN),
         StatusCodes.FORBIDDEN
