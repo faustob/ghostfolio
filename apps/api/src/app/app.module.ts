@@ -51,6 +51,7 @@ import { GhostfolioModule } from './endpoints/data-providers/ghostfolio/ghostfol
 import { MarketDataModule } from './endpoints/market-data/market-data.module';
 import { PlatformsModule } from './endpoints/platforms/platforms.module';
 import { PublicModule } from './endpoints/public/public.module';
+import { RumModule } from './endpoints/rum/rum.module';
 import { SitemapModule } from './endpoints/sitemap/sitemap.module';
 import { TagsModule } from './endpoints/tags/tags.module';
 import { WatchlistModule } from './endpoints/watchlist/watchlist.module';
@@ -135,6 +136,7 @@ import { UserModule } from './user/user.module';
     PropertyModule,
     PublicModule,
     RedisCacheModule,
+    RumModule,
     ScheduleModule.forRoot(),
     ServeStaticModule.forRoot({
       exclude: [

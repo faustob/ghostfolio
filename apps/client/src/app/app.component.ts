@@ -43,6 +43,7 @@ import { GfHoldingDetailDialogComponent } from './components/holding-detail-dial
 import { HoldingDetailDialogResult } from './components/holding-detail-dialog/interfaces/interfaces';
 import { GfAppQueryParams } from './interfaces/interfaces';
 import { ImpersonationStorageService } from './services/impersonation-storage.service';
+import { RumService } from './services/rum.service';
 import { UserService } from './services/user/user.service';
 
 @Component({
@@ -81,6 +82,7 @@ export class GfAppComponent implements OnInit {
   private readonly notificationService = inject(NotificationService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly rumService = inject(RumService);
   private readonly title = inject(Title);
   private readonly userService = inject(UserService);
 
@@ -109,6 +111,8 @@ export class GfAppComponent implements OnInit {
   }
 
   public ngOnInit() {
+    this.rumService.initialize();
+
     this.deviceType = this.deviceDetectorService.getDeviceInfo().deviceType;
     this.info = this.dataService.fetchInfo();
 

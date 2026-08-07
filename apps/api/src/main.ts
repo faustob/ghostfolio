@@ -1,3 +1,5 @@
+import './otel'; // Registers the OpenTelemetry SDK before any instrumented module loads
+
 import { languageRedirectMiddleware } from '@ghostfolio/api/middlewares/language-redirect.middleware';
 import { ConfigurationService } from '@ghostfolio/api/services/configuration/configuration.service';
 import {
