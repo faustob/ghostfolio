@@ -14,6 +14,8 @@ import * as countriesAndTimezones from 'countries-and-timezones';
 import { StatusCodes, getReasonPhrase } from 'http-status-codes';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 
+import { recordAuthAttempt } from '../../telemetry/telemetry';
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   public constructor(
@@ -71,6 +73,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
           user.settings.settings.language = DEFAULT_LANGUAGE_CODE;
         }
 
+        recordAuthAttempt({ method: 'jwt', outcome: 'granted' });
+
         return user;
       } else {
         throw new HttpException(
@@ -79,6 +83,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         );
       }
     } catch (error) {
+      recordAuthAttempt({
+        method: 'jwt',
+        outcome: 'denied',
+        reason:
+          error?.getStatus?.() === StatusCodes.TOO_MANY_REQUESTS
+            ? 'rate_limit_exceeded'
+            : 'unauthorized'
+      });
+
       if (error?.getStatus?.() === StatusCodes.TOO_MANY_REQUESTS) {
         throw error;
       } else {
