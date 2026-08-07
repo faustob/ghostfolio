@@ -33,7 +33,9 @@ import {
   isRestrictedView,
   permissions
 } from '@ghostfolio/common/permissions';
+import * as telemetry from '@ghostfolio/api/telemetry/telemetry';
 import type { RequestWithUser } from '@ghostfolio/common/types';
+import * as otelApi from '@opentelemetry/api';
 
 import {
   Body,
@@ -62,6 +64,8 @@ import { GetInvestmentsDto } from './get-investments.dto';
 import { GetPerformanceDto } from './get-performance.dto';
 import { PortfolioService } from './portfolio.service';
 import { UpdateHoldingTagsDto } from './update-holding-tags.dto';
+
+const FLOW_NAME = 'portfolio.performance.view';
 
 @Controller('portfolio')
 export class PortfolioController {
@@ -93,6 +97,20 @@ export class PortfolioController {
       withMarkets
     }: GetDetailsDto
   ): Promise<PortfolioDetails & { hasError: boolean }> {
+    const flowStartedAt = Date.now();
+    const flowSpan = otelApi.trace
+      .getTracer(telemetry.OTEL_SCOPE_NAME)
+      .startSpan('flow portfolio.performance.view allocation', {
+        attributes: {
+          flow: FLOW_NAME,
+          'flow.step': 'allocation',
+          'http.request.method': 'GET',
+          'http.route': '/api/v1/portfolio/details'
+        }
+      });
+
+    telemetry.recordFlowEntry({ flow: FLOW_NAME });
+
     let hasDetails = true;
     let hasError = false;
 
@@ -109,6 +127,31 @@ export class PortfolioController {
       filterByTags
     });
 
+    let details: Awaited<ReturnType<PortfolioService['getDetails']>>;
+
+    try {
+      details = await this.portfolioService.getDetails({
+        filters,
+        impersonationId,
+        withMarkets,
+        dateRange: range,
+        userId: this.request.user.id,
+        withSummary: true
+      });
+    } catch (error) {
+      telemetry.recordFlowOutcome({
+        flow: FLOW_NAME,
+        outcome: 'failure',
+        durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+        errorType: error?.name ?? 'Error'
+      });
+      flowSpan.setStatus({ code: otelApi.SpanStatusCode.ERROR });
+      flowSpan.end();
+
+      // Rethrow the very same error - propagation is unchanged
+      throw error;
+    }
+
     const {
       accounts,
       createdAt,
@@ -118,18 +161,29 @@ export class PortfolioController {
       marketsAdvanced,
       platforms,
       summary
-    } = await this.portfolioService.getDetails({
-      filters,
-      impersonationId,
-      withMarkets,
-      dateRange: range,
-      userId: this.request.user.id,
-      withSummary: true
-    });
+    } = details;
 
     if (hasErrors || hasNotDefinedValuesInObject(holdings)) {
       hasError = true;
     }
+
+    // Validation step: the computed holdings must be complete and error free
+    telemetry.recordFlowValidationOutcome({
+      flow: FLOW_NAME,
+      outcome: hasError ? 'failure' : 'success',
+      step: 'holdings.completeness',
+      ...(hasError ? { errorType: 'IncompleteHoldings' } : {})
+    });
+
+    telemetry.recordFlowOutcome({
+      flow: FLOW_NAME,
+      outcome: hasError ? 'failure' : 'success',
+      durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+      ...(hasError ? { errorType: 'IncompleteHoldings' } : {})
+    });
+
+    flowSpan.setAttribute('flow.validation.passed', !hasError);
+    flowSpan.end();
 
     let portfolioSummary = summary;
 
@@ -559,6 +613,20 @@ export class PortfolioController {
       withExcludedAccounts
     }: GetPerformanceDto
   ): Promise<PortfolioPerformanceResponse> {
+    const flowStartedAt = Date.now();
+    const flowSpan = otelApi.trace
+      .getTracer(telemetry.OTEL_SCOPE_NAME)
+      .startSpan('flow portfolio.performance.view performance', {
+        attributes: {
+          flow: FLOW_NAME,
+          'flow.step': 'performance',
+          'http.request.method': 'GET',
+          'http.route': '/api/v2/portfolio/performance'
+        }
+      });
+
+    telemetry.recordFlowEntry({ flow: FLOW_NAME });
+
     const filters = this.apiService.buildFiltersFromQueryParams({
       filterByAccounts: accounts,
       filterByAssetClasses: assetClasses,
@@ -567,13 +635,49 @@ export class PortfolioController {
       filterByTags: tags
     });
 
-    const performanceInformation = await this.portfolioService.getPerformance({
-      filters,
-      impersonationId,
-      withExcludedAccounts,
-      dateRange: range,
-      userId: this.request.user.id
+    let performanceInformation: PortfolioPerformanceResponse;
+
+    try {
+      performanceInformation = await this.portfolioService.getPerformance({
+        filters,
+        impersonationId,
+        withExcludedAccounts,
+        dateRange: range,
+        userId: this.request.user.id
+      });
+    } catch (error) {
+      telemetry.recordFlowOutcome({
+        flow: FLOW_NAME,
+        outcome: 'failure',
+        durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+        errorType: error?.name ?? 'Error'
+      });
+      flowSpan.setStatus({ code: otelApi.SpanStatusCode.ERROR });
+      flowSpan.end();
+
+      // Rethrow the very same error - propagation is unchanged
+      throw error;
+    }
+
+    const hasPerformanceErrors = performanceInformation.errors?.length > 0;
+
+    // Validation step: the performance chart must be free of data errors
+    telemetry.recordFlowValidationOutcome({
+      flow: FLOW_NAME,
+      outcome: hasPerformanceErrors ? 'failure' : 'success',
+      step: 'performance.data_integrity',
+      ...(hasPerformanceErrors ? { errorType: 'PerformanceDataError' } : {})
     });
+
+    telemetry.recordFlowOutcome({
+      flow: FLOW_NAME,
+      outcome: hasPerformanceErrors ? 'failure' : 'success',
+      durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+      ...(hasPerformanceErrors ? { errorType: 'PerformanceDataError' } : {})
+    });
+
+    flowSpan.setAttribute('flow.validation.passed', !hasPerformanceErrors);
+    flowSpan.end();
 
     if (
       hasReadRestrictedAccessPermission({
