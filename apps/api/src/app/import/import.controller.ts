@@ -6,7 +6,10 @@ import { ConfigurationService } from '@ghostfolio/api/services/configuration/con
 import { SubscriptionType } from '@ghostfolio/common/enums';
 import { ImportResponse } from '@ghostfolio/common/interfaces';
 import { hasPermission, permissions } from '@ghostfolio/common/permissions';
+import * as telemetry from '@ghostfolio/api/telemetry/telemetry';
 import type { RequestWithUser } from '@ghostfolio/common/types';
+
+import * as otelApi from '@opentelemetry/api';
 
 import {
   Body,
@@ -29,6 +32,8 @@ import { StatusCodes, getReasonPhrase } from 'http-status-codes';
 import { ImportDataDto } from './import-data.dto';
 import { ImportService } from './import.service';
 
+const FLOW_NAME = 'portfolio.activity.import';
+
 @Controller('import')
 export class ImportController {
   private readonly logger = new Logger(ImportController.name);
@@ -50,9 +55,33 @@ export class ImportController {
   ): Promise<ImportResponse> {
     const isDryRun = isDryRunParam === 'true';
 
+    const flowStartedAt = Date.now();
+    const flowSpan = otelApi.trace
+      .getTracer(telemetry.OTEL_SCOPE_NAME)
+      .startSpan('flow portfolio.activity.import', {
+        attributes: {
+          flow: FLOW_NAME,
+          'flow.dry_run': isDryRun,
+          'http.request.method': 'POST',
+          'http.route': '/api/v1/import'
+        }
+      });
+
+    telemetry.recordFlowEntry({ flow: FLOW_NAME });
+
     if (
       !hasPermission(this.request.user.permissions, permissions.createAccount)
     ) {
+      telemetry.recordFlowOutcome({
+        flow: FLOW_NAME,
+        outcome: 'failure',
+        durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+        errorType: 'FORBIDDEN'
+      });
+      flowSpan.setStatus({ code: otelApi.SpanStatusCode.ERROR });
+      flowSpan.setAttribute('http.response.status_code', StatusCodes.FORBIDDEN);
+      flowSpan.end();
+
       throw new HttpException(
         getReasonPhrase(StatusCodes.FORBIDDEN),
         StatusCodes.FORBIDDEN
@@ -82,8 +111,30 @@ export class ImportController {
         user: this.request.user
       });
 
+      telemetry.recordFlowOutcome({
+        flow: FLOW_NAME,
+        outcome: 'success',
+        durationInSeconds: (Date.now() - flowStartedAt) / 1000
+      });
+      flowSpan.setAttribute('flow.activities.count', activities.length);
+      flowSpan.setAttribute('http.response.status_code', StatusCodes.CREATED);
+      flowSpan.end();
+
       return { activities };
     } catch (error) {
+      telemetry.recordFlowOutcome({
+        flow: FLOW_NAME,
+        outcome: 'failure',
+        durationInSeconds: (Date.now() - flowStartedAt) / 1000,
+        errorType: error?.name ?? 'Error'
+      });
+      flowSpan.setStatus({ code: otelApi.SpanStatusCode.ERROR });
+      flowSpan.setAttribute(
+        'http.response.status_code',
+        StatusCodes.BAD_REQUEST
+      );
+      flowSpan.end();
+
       this.logger.error(error);
 
       throw new HttpException(

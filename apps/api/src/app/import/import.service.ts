@@ -9,6 +9,7 @@ import { MarketDataService } from '@ghostfolio/api/services/market-data/market-d
 import { DataGatheringService } from '@ghostfolio/api/services/queues/data-gathering/data-gathering.service';
 import { SymbolProfileService } from '@ghostfolio/api/services/symbol-profile/symbol-profile.service';
 import { TagService } from '@ghostfolio/api/services/tag/tag.service';
+import * as telemetry from '@ghostfolio/api/telemetry/telemetry';
 import {
   DATA_GATHERING_QUEUE_PRIORITY_HIGH,
   ghostfolioPrefix,
@@ -34,6 +35,7 @@ import {
 } from '@ghostfolio/common/types';
 
 import { Injectable } from '@nestjs/common';
+import * as otelApi from '@opentelemetry/api';
 import { DataSource, Prisma } from '@prisma/client';
 import { Big } from 'big.js';
 import { endOfToday, isAfter, isSameSecond, parseISO } from 'date-fns';
@@ -41,6 +43,8 @@ import { omit, uniqBy } from 'lodash';
 import { randomUUID } from 'node:crypto';
 
 import { ImportDataDto } from './import-data.dto';
+
+const FLOW_NAME = 'portfolio.activity.import';
 
 @Injectable()
 export class ImportService {
@@ -199,39 +203,97 @@ export class ImportService {
     const tagIdMapping: { [oldTagId: string]: string } = {};
     const userCurrency = user.settings.settings.baseCurrency;
 
-    // Validate the symbols before any data is persisted
-    for (const [index, assetProfileWithMarketData] of (
-      assetProfilesWithMarketDataDto ?? []
-    ).entries()) {
-      if (
-        assetProfileWithMarketData.dataSource === DataSource.MANUAL &&
-        !isValidCustomAssetProfileSymbol(assetProfileWithMarketData.symbol)
-      ) {
-        throw new Error(
-          `assetProfiles.${index}.symbol ("${assetProfileWithMarketData.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
-        );
+    const assetProfileSymbolValidationSpan = otelApi.trace
+      .getTracer(telemetry.OTEL_SCOPE_NAME)
+      .startSpan('flow.validation asset_profile_symbols', {
+        attributes: { flow: FLOW_NAME, 'flow.dry_run': isDryRun }
+      });
+    let assetProfileSymbolValidationPassed = false;
+
+    try {
+      // Validate the symbols before any data is persisted
+      for (const [index, assetProfileWithMarketData] of (
+        assetProfilesWithMarketDataDto ?? []
+      ).entries()) {
+        if (
+          assetProfileWithMarketData.dataSource === DataSource.MANUAL &&
+          !isValidCustomAssetProfileSymbol(assetProfileWithMarketData.symbol)
+        ) {
+          throw new Error(
+            `assetProfiles.${index}.symbol ("${assetProfileWithMarketData.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
+          );
+        }
       }
+
+      assetProfileSymbolValidationPassed = true;
+    } finally {
+      // `finally` only records telemetry; it never catches, so any error keeps
+      // propagating exactly as before and the span can never leak.
+      telemetry.recordFlowValidationOutcome({
+        flow: FLOW_NAME,
+        outcome: assetProfileSymbolValidationPassed ? 'passed' : 'failed',
+        step: 'asset_profile_symbols',
+        ...(assetProfileSymbolValidationPassed
+          ? {}
+          : { errorType: 'INVALID_ASSET_PROFILE_SYMBOL' })
+      });
+      assetProfileSymbolValidationSpan.setAttribute(
+        'flow.validation.outcome',
+        assetProfileSymbolValidationPassed ? 'passed' : 'failed'
+      );
+      assetProfileSymbolValidationSpan.end();
     }
 
-    // Validate the symbols before any data is persisted. Activities without a
-    // data source are excluded, since a symbol is generated in
-    // createActivity() if needed.
-    for (const [index, activity] of activitiesDto.entries()) {
-      if (!activity.dataSource) {
-        if (NON_INVESTMENT_ACTIVITY_TYPES.includes(activity.type)) {
-          activity.dataSource = DataSource.MANUAL;
-        } else {
-          activity.dataSource =
-            this.dataProviderService.getDataSourceForImport();
+    const activitySymbolValidationSpan = otelApi.trace
+      .getTracer(telemetry.OTEL_SCOPE_NAME)
+      .startSpan('flow.validation activity_symbols', {
+        attributes: {
+          flow: FLOW_NAME,
+          'flow.activities.count': activitiesDto.length,
+          'flow.dry_run': isDryRun
         }
-      } else if (
-        activity.dataSource === DataSource.MANUAL &&
-        !isValidCustomAssetProfileSymbol(activity.symbol)
-      ) {
-        throw new Error(
-          `activities.${index}.symbol ("${activity.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
-        );
+      });
+    let activitySymbolValidationPassed = false;
+
+    try {
+      // Validate the symbols before any data is persisted. Activities without a
+      // data source are excluded, since a symbol is generated in
+      // createActivity() if needed.
+      for (const [index, activity] of activitiesDto.entries()) {
+        if (!activity.dataSource) {
+          if (NON_INVESTMENT_ACTIVITY_TYPES.includes(activity.type)) {
+            activity.dataSource = DataSource.MANUAL;
+          } else {
+            activity.dataSource =
+              this.dataProviderService.getDataSourceForImport();
+          }
+        } else if (
+          activity.dataSource === DataSource.MANUAL &&
+          !isValidCustomAssetProfileSymbol(activity.symbol)
+        ) {
+          throw new Error(
+            `activities.${index}.symbol ("${activity.symbol}") must be a UUID or start with the prefix "${ghostfolioPrefix}_" for the data source ("${DataSource.MANUAL}")`
+          );
+        }
       }
+
+      activitySymbolValidationPassed = true;
+    } finally {
+      // `finally` only records telemetry; it never catches, so any error keeps
+      // propagating exactly as before and the span can never leak.
+      telemetry.recordFlowValidationOutcome({
+        flow: FLOW_NAME,
+        outcome: activitySymbolValidationPassed ? 'passed' : 'failed',
+        step: 'activity_symbols',
+        ...(activitySymbolValidationPassed
+          ? {}
+          : { errorType: 'INVALID_ACTIVITY_SYMBOL' })
+      });
+      activitySymbolValidationSpan.setAttribute(
+        'flow.validation.outcome',
+        activitySymbolValidationPassed ? 'passed' : 'failed'
+      );
+      activitySymbolValidationSpan.end();
     }
 
     if (platformsDto?.length) {
