@@ -60,11 +60,14 @@ import { GetDividendsDto } from './get-dividends.dto';
 import { GetHoldingsDto } from './get-holdings.dto';
 import { GetInvestmentsDto } from './get-investments.dto';
 import { GetPerformanceDto } from './get-performance.dto';
+import { PORTFOLIO_FLOW_NAME, recordPortfolioFlowValidation, runPortfolioFlow } from './portfolio-flow.telemetry';
 import { PortfolioService } from './portfolio.service';
 import { UpdateHoldingTagsDto } from './update-holding-tags.dto';
 
 @Controller('portfolio')
 export class PortfolioController {
+  private readonly flowName = PORTFOLIO_FLOW_NAME;
+
   public constructor(
     private readonly activitiesService: ActivitiesService,
     private readonly apiService: ApiService,
@@ -93,6 +96,32 @@ export class PortfolioController {
       withMarkets
     }: GetDetailsDto
   ): Promise<PortfolioDetails & { hasError: boolean }> {
+    return runPortfolioFlow({ step: 'details' }, async () => {
+      return this.getDetailsInternal({
+        impersonationId,
+        range,
+        withMarkets,
+        accounts: filterByAccounts,
+        assetClasses: filterByAssetClasses,
+        dataSource: filterByDataSource,
+        symbol: filterBySymbol,
+        tags: filterByTags
+      });
+    });
+  }
+
+  private async getDetailsInternal({
+    accounts: filterByAccounts,
+    assetClasses: filterByAssetClasses,
+    dataSource: filterByDataSource,
+    impersonationId,
+    range,
+    symbol: filterBySymbol,
+    tags: filterByTags,
+    withMarkets
+  }: GetDetailsDto & {
+    impersonationId: string;
+  }): Promise<PortfolioDetails & { hasError: boolean }> {
     let hasDetails = true;
     let hasError = false;
 
@@ -130,6 +159,11 @@ export class PortfolioController {
     if (hasErrors || hasNotDefinedValuesInObject(holdings)) {
       hasError = true;
     }
+
+    recordPortfolioFlowValidation({
+      passed: !hasError,
+      step: 'details.holdings'
+    });
 
     let portfolioSummary = summary;
 
@@ -447,6 +481,34 @@ export class PortfolioController {
       tags
     }: GetHoldingsDto
   ): Promise<PortfolioHoldingsResponse> {
+    return runPortfolioFlow({ step: 'holdings' }, async () => {
+      return this.getHoldingsInternal({
+        accounts,
+        assetClasses,
+        dataSource,
+        holdingType,
+        impersonationId,
+        query,
+        range,
+        symbol,
+        tags
+      });
+    });
+  }
+
+  private async getHoldingsInternal({
+    accounts,
+    assetClasses,
+    dataSource,
+    holdingType,
+    impersonationId,
+    query,
+    range,
+    symbol,
+    tags
+  }: GetHoldingsDto & {
+    impersonationId: string;
+  }): Promise<PortfolioHoldingsResponse> {
     const filters = this.apiService.buildFiltersFromQueryParams({
       filterByAccounts: accounts,
       filterByAssetClasses: assetClasses,
@@ -559,6 +621,32 @@ export class PortfolioController {
       withExcludedAccounts
     }: GetPerformanceDto
   ): Promise<PortfolioPerformanceResponse> {
+    return runPortfolioFlow({ step: 'performance' }, async () => {
+      return this.getPerformanceV2Internal({
+        accounts,
+        assetClasses,
+        dataSource,
+        impersonationId,
+        range,
+        symbol,
+        tags,
+        withExcludedAccounts
+      });
+    });
+  }
+
+  private async getPerformanceV2Internal({
+    accounts,
+    assetClasses,
+    dataSource,
+    impersonationId,
+    range,
+    symbol,
+    tags,
+    withExcludedAccounts
+  }: GetPerformanceDto & {
+    impersonationId: string;
+  }): Promise<PortfolioPerformanceResponse> {
     const filters = this.apiService.buildFiltersFromQueryParams({
       filterByAccounts: accounts,
       filterByAssetClasses: assetClasses,
@@ -573,6 +661,11 @@ export class PortfolioController {
       withExcludedAccounts,
       dateRange: range,
       userId: this.request.user.id
+    });
+
+    recordPortfolioFlowValidation({
+      passed: !performanceInformation.hasErrors,
+      step: 'performance.calculation'
     });
 
     if (

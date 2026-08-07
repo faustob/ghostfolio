@@ -1,3 +1,7 @@
+// Register the OpenTelemetry SDK before anything else is imported so that the
+// auto-instrumentations can patch the HTTP/Prisma/Redis modules on load.
+import './otel';
+
 import { languageRedirectMiddleware } from '@ghostfolio/api/middlewares/language-redirect.middleware';
 import { ConfigurationService } from '@ghostfolio/api/services/configuration/configuration.service';
 import {
