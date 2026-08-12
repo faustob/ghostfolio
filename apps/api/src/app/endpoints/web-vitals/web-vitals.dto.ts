@@ -20,6 +20,11 @@ export class WebVitalsReportDto {
   @MaxLength(256)
   route: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  traceParent?: string;
+
   @IsIn(['js-error', 'session-start', 'vital'])
   type: 'js-error' | 'session-start' | 'vital';
 

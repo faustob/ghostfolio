@@ -39,6 +39,12 @@ let flowOutcome: Counter | undefined;
 let flowDuration: Histogram | undefined;
 let flowEntryToTerminalDuration: Histogram | undefined;
 let flowValidationOutcome: Counter | undefined;
+let webVitalLcp: Histogram | undefined;
+let webVitalInp: Histogram | undefined;
+let webVitalCls: Histogram | undefined;
+let webRouteChangeDuration: Histogram | undefined;
+let webJsErrors: Counter | undefined;
+let webSessions: Counter | undefined;
 
 /**
  * OTel semantic convention: inbound request duration in SECONDS.
@@ -247,6 +253,176 @@ export function reportWorkerPoolSize() {
     Number.parseInt(process.env.UV_THREADPOOL_SIZE ?? '', 10) || 4;
 
   getHttpServerWorkerPoolSize().add(poolSize);
+}
+
+/**
+ * Largest Contentful Paint, reported by the browser via /api/v1/web-vitals
+ * (see apps/client/src/app/services/web-vitals.service.ts, which is started
+ * from GfAppComponent.ngOnInit).
+ *
+ * Naming: domain.noun.measurement, matching the http.server.request.duration
+ * semconv style used above - the vital is spelled out as a compound word
+ * within one segment rather than abbreviated into a namespace level.
+ * The web-vitals library reports LCP/INP in MILLISECONDS.
+ */
+export function getWebVitalLcp(): Histogram {
+  if (!webVitalLcp) {
+    webVitalLcp = getMeter().createHistogram(
+      'web.vital.largest_contentful_paint.duration',
+      {
+        description: 'Largest Contentful Paint reported by real user sessions',
+        unit: 'ms'
+      }
+    );
+  }
+
+  return webVitalLcp;
+}
+
+/** Interaction to Next Paint, in MILLISECONDS. */
+export function getWebVitalInp(): Histogram {
+  if (!webVitalInp) {
+    webVitalInp = getMeter().createHistogram(
+      'web.vital.interaction_to_next_paint.duration',
+      {
+        description: 'Interaction to Next Paint reported by real user sessions',
+        unit: 'ms'
+      }
+    );
+  }
+
+  return webVitalInp;
+}
+
+/**
+ * Cumulative Layout Shift - a unitless visual-stability SCORE, not a latency,
+ * hence `.score` rather than `.duration` and unit `1`.
+ */
+export function getWebVitalCls(): Histogram {
+  if (!webVitalCls) {
+    webVitalCls = getMeter().createHistogram(
+      'web.vital.cumulative_layout_shift.score',
+      {
+        description:
+          'Cumulative Layout Shift (unitless score) reported by real user sessions',
+        unit: '1'
+      }
+    );
+  }
+
+  return webVitalCls;
+}
+
+/**
+ * SPA soft-navigation (route transition) duration, in MILLISECONDS.
+ * Shares the `web.*` domain prefix with the Core Web Vitals instruments above.
+ */
+export function getWebRouteChangeDuration(): Histogram {
+  if (!webRouteChangeDuration) {
+    webRouteChangeDuration = getMeter().createHistogram(
+      'web.route_change.duration',
+      {
+        description:
+          'Duration of SPA route transitions measured in the browser',
+        unit: 'ms'
+      }
+    );
+  }
+
+  return webRouteChangeDuration;
+}
+
+/** Unhandled client-side JavaScript errors (error-rate numerator). */
+export function getWebJsErrors(): Counter {
+  if (!webJsErrors) {
+    webJsErrors = getMeter().createCounter('web.js.errors', {
+      description: 'Unhandled JavaScript errors reported by the browser'
+    });
+  }
+
+  return webJsErrors;
+}
+
+/** Browser sessions started (error-rate denominator). */
+export function getWebSessions(): Counter {
+  if (!webSessions) {
+    webSessions = getMeter().createCounter('web.sessions', {
+      description: 'Browser sessions started, reported by the client'
+    });
+  }
+
+  return webSessions;
+}
+
+/**
+ * Records a Core Web Vital or SPA soft-navigation timing reported by the
+ * browser. Called from WebVitalsController (POST /api/v1/web-vitals).
+ * `route` is the low-cardinality Angular route TEMPLATE.
+ */
+export function recordWebVital({
+  deviceType,
+  metric,
+  route,
+  value
+}: {
+  deviceType?: string;
+  metric: string;
+  route: string;
+  value: number;
+}) {
+  const attributes = {
+    'url.template': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
+  };
+
+  switch (metric) {
+    case 'LCP':
+      getWebVitalLcp().record(value, attributes);
+      break;
+    case 'INP':
+      getWebVitalInp().record(value, attributes);
+      break;
+    case 'CLS':
+      getWebVitalCls().record(value, attributes);
+      break;
+    case 'route-change':
+      getWebRouteChangeDuration().record(value, attributes);
+      break;
+    default:
+      // Unknown metric names are ignored to keep the time series bounded
+      break;
+  }
+}
+
+/** Records an unhandled client-side JavaScript error. */
+export function recordWebJsError({
+  deviceType,
+  errorType,
+  route
+}: {
+  deviceType?: string;
+  errorType: string;
+  route: string;
+}) {
+  getWebJsErrors().add(1, {
+    'error.type': errorType,
+    'url.template': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
+  });
+}
+
+/** Records the start of a browser session (JS error-rate denominator). */
+export function recordWebSessionStart({
+  deviceType,
+  route
+}: {
+  deviceType?: string;
+  route: string;
+}) {
+  getWebSessions().add(1, {
+    'url.template': route,
+    ...(deviceType ? { 'device.type': deviceType } : {})
+  });
 }
 
 export function recordAuthAttempt({

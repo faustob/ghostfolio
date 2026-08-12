@@ -14,6 +14,7 @@ interface WebVitalsReport {
   errorType?: string;
   metric?: string;
   route: string;
+  traceParent?: string;
   type: 'js-error' | 'session-start' | 'vital';
   value?: number;
 }
@@ -36,6 +37,7 @@ export class WebVitalsService {
   private deviceType: string | undefined;
   private isInitialized = false;
   private navigationStartTime: number | undefined;
+  private navigationTraceParent: string | undefined;
 
   private readonly router = inject(Router);
 
@@ -114,16 +116,21 @@ export class WebVitalsService {
     this.router.events.subscribe((event) => {
       if (event instanceof NavigationStart) {
         this.navigationStartTime = performance.now();
+        this.navigationTraceParent = this.createTraceParent();
       } else if (event instanceof NavigationEnd) {
         if (this.navigationStartTime !== undefined) {
           const duration = performance.now() - this.navigationStartTime;
 
+          const traceParent = this.navigationTraceParent;
+
           this.navigationStartTime = undefined;
+          this.navigationTraceParent = undefined;
 
           this.send({
             deviceType: this.deviceType,
             metric: 'route-change',
             route: this.getRoute(),
+            traceParent,
             type: 'vital',
             value: duration
           });
@@ -133,6 +140,7 @@ export class WebVitalsService {
         event instanceof NavigationError
       ) {
         this.navigationStartTime = undefined;
+        this.navigationTraceParent = undefined;
       }
     });
   }
@@ -173,9 +181,52 @@ export class WebVitalsService {
    * Delivers a report without blocking the page. Reporting must never affect
    * the application, so every failure is swallowed here (and only here).
    */
+  /**
+   * Builds a W3C `traceparent` (version-00, sampled) using the platform CSPRNG.
+   * Deliberately hand-rolled: the browser has no registered OpenTelemetry SDK,
+   * so `trace.getTracer()` here would be a no-op and emit nothing.
+   */
+  private createTraceParent() {
+    try {
+      const toHex = (byteLength: number) => {
+        const bytes = new Uint8Array(byteLength);
+
+        crypto.getRandomValues(bytes);
+
+        return Array.from(bytes)
+          .map((byte) => {
+            return byte.toString(16).padStart(2, '0');
+          })
+          .join('');
+      };
+
+      return `00-${toHex(16)}-${toHex(8)}-01`;
+    } catch {
+      return undefined;
+    }
+  }
+
   private send(report: WebVitalsReport) {
     try {
       const body = JSON.stringify(report);
+
+      // `fetch` can carry the trace context as a real header; `sendBeacon`
+      // cannot, so there the traceparent travels in the JSON body instead.
+      if (report.traceParent) {
+        void fetch(WebVitalsService.ENDPOINT, {
+          body,
+          headers: {
+            'content-type': 'application/json',
+            traceparent: report.traceParent
+          },
+          keepalive: true,
+          method: 'POST'
+        }).catch(() => {
+          // Ignore telemetry delivery failures
+        });
+
+        return;
+      }
 
       if (typeof navigator.sendBeacon === 'function') {
         navigator.sendBeacon(
