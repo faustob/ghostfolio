@@ -23,7 +23,7 @@ import {
 import { MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { bootstrapApplication } from '@angular/platform-browser';
-import { RouterModule, TitleStrategy } from '@angular/router';
+import { Router, RouterModule, TitleStrategy } from '@angular/router';
 import { ServiceWorkerModule } from '@angular/service-worker';
 import { provideIonicAngular } from '@ionic/angular/standalone';
 import { provideMarkdown } from 'ngx-markdown';
@@ -37,10 +37,13 @@ import { authInterceptorProviders } from './app/core/auth.interceptor';
 import { httpResponseInterceptorProviders } from './app/core/http-response.interceptor';
 import { LanguageService } from './app/core/language.service';
 import { ModulePreloadService } from './app/core/module-preload.service';
+import { initBrowserTelemetry, subscribeRouterNavigationTiming } from './app/core/telemetry/browser-telemetry';
 import { PageTitleStrategy } from './app/services/page-title.strategy';
 import { environment } from './environments/environment';
 
 (async () => {
+  initBrowserTelemetry();
+
   const response = await fetch('/api/v1/info');
   const info: InfoResponse = await response.json();
   const utmSource = window.localStorage.getItem('utm_source') as
@@ -60,7 +63,7 @@ import { environment } from './environments/environment';
 
   registerChartConfiguration();
 
-  await bootstrapApplication(GfAppComponent, {
+  const appRef = await bootstrapApplication(GfAppComponent, {
     providers: [
       authInterceptorProviders,
       httpResponseInterceptorProviders,
@@ -105,4 +108,6 @@ import { environment } from './environments/environment';
       }
     ]
   });
+
+  subscribeRouterNavigationTiming(appRef.injector.get(Router));
 })();
